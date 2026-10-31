@@ -561,6 +561,25 @@ class StableToolOrder(unittest.TestCase):
         self.assertEqual(self.names(oa(two, one)), ["nsx::probe", "plain"])
 
 
+class DefaultSystemPrompt(unittest.TestCase):
+    """The run config's system_prompt goes first in a request without a system message; a client's own wins."""
+
+    def test_added_only_when_the_request_has_none(self):
+        tok = ByteTokenizer()
+        svc = Service(MockEngine(tok, "x"), tok, ChatTemplate(ROOT / "serve/chat_template.jinja"))
+        msgs = [{"role": "user", "content": "hi"}]
+        req = {"messages": msgs}
+        plain = svc.count_tokens(req)["tokens"]
+        self.assertIs(svc.with_system(msgs), msgs)                       # none set: as sent
+        svc.default_system = "Be brief."
+        self.assertEqual(svc.with_system(msgs), [{"role": "system", "content": "Be brief."}] + msgs)
+        self.assertGreater(svc.count_tokens(req)["tokens"], plain)       # the prompt grew by the system text
+        own = [{"role": "system", "content": "Mine."}] + msgs
+        self.assertIs(svc.with_system(own), own)                         # the client's own system message wins
+        self.assertEqual(svc.count_tokens({"messages": own})["tokens"],
+                         Service.count_tokens(Service(MockEngine(tok, "x"), tok, svc.template), {"messages": own})["tokens"])
+
+
 class ClientShapes(unittest.TestCase):
     """What real clients send: Claude Code posts /v1/messages?beta=true (issue #55) and puts hook context into the
     conversation as a mid-conversation system message (issue #56); some OpenAI clients send a late developer message."""

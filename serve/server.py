@@ -2519,6 +2519,7 @@ class Service:
         self.fit_max_tokens = fit_max_tokens          # --fit-max-tokens: clamp the output cap instead of 400
         self.sampling_defaults = dict(sampling_defaults or {})   # the run config's `sampling` block
         self.default_effort = None                    # the run config's `reasoning_effort`: a request without one
+        self.default_system = ""                      # the run config's `system_prompt`: a request without a system message
         self.shared = {}                              # the web app's Chat settings for every client (POST /settings)
         self.shared_path = None                       # where they are kept between starts (next to the config)
         self.fifo = FairLock()
@@ -3655,6 +3656,12 @@ class Service:
                 "ram": {"used_gib": scaled(hw.get("ram_used"), 2 ** 30, 1),
                         "total_gib": scaled(hw.get("ram_total"), 2 ** 30, 1)} if hw.get("ram_total") else None}}
 
+    def with_system(self, messages):
+        """The run config's system prompt goes first in a request that has none; a client's own system message wins."""
+        if not self.default_system or (messages and messages[0].get("role") == "system"):
+            return messages
+        return [{"role": "system", "content": self.default_system}] + list(messages)
+
     def prepare(self, messages, tools, kwargs, max_new=None, cancel=None, guard=None):
         """-> (ids, thinking, max_new). An unset or non-positive max_new (some clients send -1) means "unlimited":
         the rest of the context.  A tool_choice that requires a call ("_force_tool": "" any, else the tool's name)
@@ -3674,6 +3681,7 @@ class Service:
                 noted = messages + [{"role": "user", "content": loop_guard.blocked_note(blocked)}]
             messages = self._collapse(messages) + noted[len(messages):]
         given, force = kwargs, kwargs.get("_force_tool")
+        messages = self.with_system(messages)
         kwargs = {k: v for k, v in kwargs.items() if k != "_force_tool"}
         if force is not None and tools:
             kwargs["enable_thinking"] = False
@@ -3837,6 +3845,7 @@ class Service:
         """A chat request's template messages, tools and kwargs as prepare() gets them (the run config's thinking
         level included), for measuring its prompt without running it."""
         messages, tools, kw = openai_to_messages(req, deepseek=getattr(self.template, "deepseek", False), glm_dsa=getattr(self.template, "glm_dsa", False))
+        messages = self.with_system(messages)
         kw = {k: v for k, v in kw.items() if k != "_force_tool"}
         if req.get("strata_mcp") is True and self.mcp is not None:
             own = {t.get("name") for t in tools or []}
@@ -7469,6 +7478,15 @@ def main() -> int:
         print(f"[maya] thinking level when a request names none: {level}"
               f"{'' if level in (svc.default_effort, f'{svc.default_effort} of 100') else f' (the config says {svc.default_effort})'}",
               flush=True)
+    sys_file, sys_text = cfg.get("system_prompt_file"), cfg.get("system_prompt")   # (a file's path is the config's folder's)
+    if sys_file:
+        try:
+            sys_text = (Path(a.config).resolve().parent / sys_file).read_text(encoding="utf-8")
+        except OSError as e:
+            raise SystemExit(f"[maya] config system_prompt_file: {e}")
+    if sys_text and sys_text.strip():
+        svc.default_system = sys_text.strip()
+        print(f"[maya] system prompt when a request has none: {len(svc.default_system)} characters", flush=True)
     svc.think_budget = int(cfg["thinking_budget"] if cfg.get("thinking_budget") is not None else
                            maya_quants.default_thinking_budget(cfg) if a.engine == "maya" else 32768)         if svc.think_end_id is not None else 0
     svc.idle_unload_s = max(0.0, a.idle_unload if a.idle_unload is not None else float(cfg.get("idle_unload_s") or 0))
