@@ -144,8 +144,11 @@ constexpr int kShSub = 2048;   // the shared expert's on CUDA (shexp_sub)
 constexpr size_t kMmqSlab = (size_t) 16 << 20;
 // prestaging (PrefillState::pbuf): the buffer's slots on one GPU, the chunk from which it is carved, and the fewest
 // predicted rows an expert is prestaged for (below that it may not be routed at all); kSplitAutoChunk: the chunk a
-// split's parts pipeline when --prefill is auto (prefill_setup)
+// split's parts pipeline when --prefill is auto (prefill_setup), kSplitSlowChunk theirs behind a host link slower
+// than kSlowLinkGBs (prefill_link)
 constexpr int kPreSlots = 160, kPreSlotsSplit = 32, kSplitAutoChunk = 1024, kPreMinT = 512, kPreMinRows = 4;
+constexpr int kSplitSlowChunk = 2048;
+constexpr double kSlowLinkGBs = 4.5;
 // resident experts routed by at most kLightRows rows of a chunk take the light kernels (gf::rows_experts) instead of
 // MMQ (MAYA_GLM_PREFILL_LIGHT overrides, 0 = MMQ only); their {slot, r0, nr} ride the bounds array from kLightOff
 constexpr int kLightRows = 32, kLightOff = 6144, kLightMax = (8192 - kLightOff) / 3;
@@ -673,6 +676,7 @@ struct Glm5Model::PrefillState {
     std::function<std::pair<int64_t, int>(int64_t)> choose;
     int64_t lend_pct = 90;
     bool lend_pct_fixed = false;
+    bool link_test = false;          // a split's auto chunk: prefill_link settles it from the host link's rate
     std::string mode;
     int sub_env = 0;                 // MAYA_GLM_PREFILL_SUB: every sub-batch (0: mixer_sub, the shared expert kSub)
     int sh_sub() const { return shexp_sub(sub_env); }   // the shared expert's sub-batch
@@ -1171,6 +1175,27 @@ void Glm5Model::prefill_settle(double pinned_share) {
     prefill_cap((int) pick.first, "--prefill auto at 85%");
 }
 
+// A split's auto chunk from the host link the CPU lane timed (FastState::cpu_link_gbs, this card alone): every chunk
+// stages each layer's non-resident experts again, over a link the parts share, so a slow one wants fewer, longer
+// chunks.  4x P100 behind one Gen3 x4 uplink (3.3 GB/s alone and for all four): 4K prompt 1024 190 -> 2048 238 tok/s,
+// 4096 (the parts in turn) 195; behind a Gen3 x16 uplink (6.5 GB/s a card, v1.1.12) 1024 175, 2048 160.  Untimed or
+// fast: kSplitAutoChunk
+void Glm5Model::prefill_link() {
+    PrefillState* S = pf_;
+    if (S == nullptr || !S->link_test) return;
+    S->link_test = false;
+    const double gbs = fast_ != nullptr ? fast_->cpu_link_gbs : 0.0;
+    if (gbs > 0.0 && gbs < kSlowLinkGBs) {
+        if (S->T > kSplitAutoChunk)
+            std::fprintf(stderr, "glm prefill: CUDA%d the host link streams %.1f GB/s (under %.1f): chunks of %d tokens\n",
+                         dev_, gbs, kSlowLinkGBs, S->T);
+        return;
+    }
+    char why[96];
+    std::snprintf(why, sizeof why, gbs > 0.0 ? "--prefill auto, the host link %.1f GB/s" : "--prefill auto, the host link untimed", gbs);
+    prefill_cap(kSplitAutoChunk, why);
+}
+
 // the weight scratch the prompt path keeps beside a chunk's rows: {BF16 elements, F32 elements}
 static std::pair<int64_t, int64_t> weight_scratch(const Glm5Geometry& g, bool has_dsa) {
     const int64_t E = g.n_embd;
@@ -1312,8 +1337,15 @@ bool Glm5Model::prefill_setup(std::string& err) {
     const std::string mode = prefill_mode();
     const bool is_auto = mode == "auto";
     // a split's parts pipeline chunks, so auto stops at kSplitAutoChunk: 8192 cut a 4K prompt into ONE chunk that no part
-    // overlaps with another, and its buffers took 2.3 GB of the pool (4x P100: 4K prompt 162-205 tok/s, 1024 254)
-    const int64_t auto_max = n_parts_ == 1 ? 32768 : kSplitAutoChunk;
+    // overlaps with another, and its buffers took 2.3 GB of the pool (4x P100: 4K prompt 162-205 tok/s, 1024 254).
+    // It is sized here for kSplitSlowChunk, and prefill_link takes it to kSplitAutoChunk unless the host link timed
+    // slow (STRATA_GLM_PREFILL_SPLIT_AUTO=<tokens>: that chunk, no link test)
+    static const int split_env = [] {
+        const char* v = getenv("STRATA_GLM_PREFILL_SPLIT_AUTO");
+        return v != nullptr && std::atoi(v) >= kMinPrefillChunk ? std::atoi(v) / 256 * 256 : 0;
+    }();
+    const int64_t auto_max = n_parts_ == 1 ? 32768 : split_env > 0 ? split_env : kSplitSlowChunk;
+    S->link_test = is_auto && n_parts_ > 1 && split_env == 0;
     const int64_t ceiling = is_auto ? auto_max : (int64_t) std::atoll(mode.c_str());
     // the pool to come: `per` slots a layer over the tier layers, as fast_setup sizes it from the same free VRAM
     size_t dev_free = 0, dev_total = 0;

@@ -954,6 +954,7 @@ struct Glm5Model::FastState {
     int64_t ram_check_head = 0;                // a parallel load: the headroom ram_left_check holds the free RAM to
     double cpu_c_ms = 0.0, cpu_p_ms = 0.0;   // the lane's calibration: an expert on the CPU, one over PCIe
     double cpu_ps_ms = 0.0;                  // ... one in a stream of copies (the prompt's staging)
+    double cpu_link_gbs = 0.0;               // ... that stream's rate, GB/s (prefill_link; 0: untimed)
     unsigned long long cpu_plan = 0;
     unsigned long long cpu_plan_start = 0;   // ... the plan the engine started with (set_pcie_share(-1) restores it)
     gf::CpuAnswer* cpu_ans_h = nullptr;                      // host-mapped

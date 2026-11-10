@@ -4143,6 +4143,7 @@ bool Glm5Model::fast_cpu_lane_setup(std::string& err) {
     F->cpu_c_ms = c_ms;   // (the prompt path splits its staged experts by them too)
     F->cpu_p_ms = p_ms;
     F->cpu_ps_ms = ps_ms;
+    F->cpu_link_gbs = ps_ms > 0.0 ? (double) blob / (ps_ms * 1e6) : 0.0;
     // the split: k of f to the host minimises max(PCIe (f - k) p, lane overhead + k c) (lane_plan)
     unsigned long long plan = 0;
     std::string tab;

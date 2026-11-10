@@ -1349,6 +1349,7 @@ bool Glm5Model::load_pack_split(const std::string& pack_dir, int64_t max_ctx, co
     // the chunks are the smallest part's (as Strata's split): the others keep their pinned staging to that, and a
     // later card that holds the first one's chunk down is named (upstream #448: a small card in a split caps every
     // stage's chunk - prompts read slower than on the first card alone)
+    for (Glm5Model* p = this; p != nullptr; p = p->split_next_.get()) p->prefill_link();
     int tmin = 0;
     for (Glm5Model* p = this; p != nullptr; p = p->split_next_.get())
         if (p->prefill_chunk() > 0) tmin = tmin == 0 ? p->prefill_chunk() : std::min(tmin, p->prefill_chunk());

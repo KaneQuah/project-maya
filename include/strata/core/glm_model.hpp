@@ -1101,6 +1101,7 @@ public:
     void prefill_destroy();
     void prefill_cap(int T, const char* why);              // its pinned staging for chunks of at most T
     void prefill_settle(double pinned_share);              // --prefill auto's lend cap from the pinned share (85/90%)
+    void prefill_link();                                   // ... a split's chunk from the host link's timed rate
     // a chunk's device buffers {kept rows, scratch}; kv_stage: the KV streaming stage's bytes (SIZE_MAX: the whole
     // context's, kv_stage_bytes_)
     std::pair<size_t, size_t> prefill_bytes_for(size_t T, size_t kv_stage = SIZE_MAX) const;
