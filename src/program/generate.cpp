@@ -1751,11 +1751,18 @@ static int glm_pack_generate(const Options& o) {
         for (auto& c : ckpts)
             if (c.tokens.size() > from) c.tokens.clear();
     };
+    // Pictures: a checkpoint is kept and restored only where every picture lies after it - its tokens hold no image, so
+    // the same tokens before a different picture (a captioning job's fixed system prompt) reuse it.  The bound
+    // (exclusive) on where a checkpoint may stand in this request's prompt: at or before its first picture
+    const auto ckpt_img_lim = [&](size_t end) {
+        return cur_img_pos.empty() ? end : std::min(end, (size_t) cur_img_pos.front() + 1);
+    };
     // the positions in [from + 512, end) a prompt read from `from` keeps checkpoints at (see above), ascending
     const auto ckpt_marks = [&](const std::vector<int32_t>& prompt, size_t from, size_t end) {
         constexpr int32_t kUserTok = 154827, kObsTok = 154829;   // <|user|>, <|observation|>
         std::vector<size_t> at;
-        if (ckpt_max <= 0 || !cur_img_pos.empty() || end <= from + 512) return at;
+        end = ckpt_img_lim(end);
+        if (ckpt_max <= 0 || end <= from + 512) return at;
         size_t first = 0, last = 0;
         for (size_t i = 1; i < end; ++i)
             if (prompt[i] == kUserTok || prompt[i] == kObsTok) {
@@ -1886,10 +1893,10 @@ static int glm_pack_generate(const Options& o) {
                              img_hash(snap_tokens.size()) == snap_img_hash && getenv("MAYA_GLM_NO_REUSE") == nullptr;
         // the longest checkpoint this prompt starts with (it holds less than the snapshot when both match)
         int ck = -1;
-        if (ckpt_max > 0 && cur_img_pos.empty() && !abl_flip)
+        if (ckpt_max > 0 && !abl_flip)
             for (int c = 0; c < (int) ckpts.size(); ++c) {
-                const auto& t = ckpts[(size_t) c].tokens;
-                if (!t.empty() && t.size() < prompt.size() && (ck < 0 || t.size() > ckpts[(size_t) ck].tokens.size()) &&
+                const auto& t = ckpts[(size_t) c].tokens;   // (a checkpoint of n tokens holds [0, n): n <= first picture)
+                if (!t.empty() && t.size() < ckpt_img_lim(prompt.size()) && (ck < 0 || t.size() > ckpts[(size_t) ck].tokens.size()) &&
                     std::equal(t.begin(), t.end(), prompt.begin()))
                     ck = c;
             }
@@ -2143,14 +2150,14 @@ static int glm_pack_generate(const Options& o) {
                 static const bool keep_cancelled = env_num("MAYA_GLM_KEEP_CANCELLED", 1) != 0;
                 const size_t reached = later.empty() ? at : std::max(at, read_to.load(std::memory_order_relaxed));
                 size_t kept = 0;
-                if (keep_cancelled && ckpt_max > 0 && cur_img_pos.empty()) {
+                if (keep_cancelled && ckpt_max > 0) {
                     // (the marks in (at, reached]: each is longer than any checkpoint the read started from, so the
                     // restore below takes the last of them and ckpt_drop_past keeps them all)
                     keep_later(reached);
                     int best = -1;
                     for (int c = 0; c < (int) ckpts.size(); ++c) {
                         const auto& t = ckpts[(size_t) c].tokens;
-                        if (!t.empty() && t.size() <= reached &&
+                        if (!t.empty() && t.size() <= reached && t.size() < ckpt_img_lim(prompt.size()) &&
                             (best < 0 || t.size() > ckpts[(size_t) best].tokens.size()) &&
                             std::equal(t.begin(), t.end(), prompt.begin()))
                             best = c;
@@ -3144,10 +3151,10 @@ static int glm_pack_generate(const Options& o) {
             if (abl_same && !st.empty() && st.size() < g->prompt.size() &&
                 std::equal(st.begin(), st.end(), g->prompt.begin()) && img_hash(st.size()) == hh)
                 len = st.size();
-            if (abl_same && ckpt_max > 0 && cur_img_pos.empty()) {   // (checkpoints are kept of text prompts only)
+            if (abl_same && ckpt_max > 0) {   // (a checkpoint stands before the prompt's first picture)
                 const std::vector<Ckpt>& cl = c == cur_ctx ? ckpts : ctxs[(size_t) c].ckpts;
                 for (const Ckpt& k : cl)
-                    if (k.tokens.size() > len && k.tokens.size() < g->prompt.size() &&
+                    if (k.tokens.size() > len && k.tokens.size() < ckpt_img_lim(g->prompt.size()) &&
                         std::equal(k.tokens.begin(), k.tokens.end(), g->prompt.begin()))
                         len = k.tokens.size();
             }
