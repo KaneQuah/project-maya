@@ -616,7 +616,7 @@ bool dense_usable(const Dense& d) {
     if (d.n <= 0 || d.t <= 0 || d.k % 32 != 0 || d.n % 4 != 0 || d.ld_x % 4 != 0 || d.ld_y % 4 != 0 || d.k > (1 << 20))
         return false;
     if (((uintptr_t) d.w & 15) != 0 || ((uintptr_t) d.x & 7) != 0 || ((uintptr_t) d.y & 15) != 0) return false;
-    static const int env = std::getenv("STRATA_GLM_PREFILL_PASCAL_DENSE") ? std::atoi(std::getenv("STRATA_GLM_PREFILL_PASCAL_DENSE")) : -1;
+    static const int env = std::getenv("MAYA_GLM_PREFILL_PASCAL_DENSE") ? std::atoi(std::getenv("MAYA_GLM_PREFILL_PASCAL_DENSE")) : -1;
     if (env == 0) return false;
     if (env < 0) {
         int dev = 0, major = 0, minor = 0;

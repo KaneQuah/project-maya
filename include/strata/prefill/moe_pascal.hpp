@@ -62,7 +62,7 @@ struct Dense {
 /// The device is compute < 6.1, the shapes and pointers fit (k % 32, n % 4, ld_x and ld_y % 4, aligned) and the grid
 /// is big enough (under 20 tiles of 128 x 64 stays with cuBLAS; a grid of 20..80 or 113..139 tiles runs in two K pieces
 /// that add into y, zeroed first on the stream: two sums add the same in either order, so the bits do not change).
-/// STRATA_GLM_PREFILL_PASCAL_DENSE=0 turns it off, 1 forces it on whatever the card.
+/// MAYA_GLM_PREFILL_PASCAL_DENSE=0 turns it off, 1 forces it on whatever the card.
 bool dense_usable(const Dense& d);
 
 void dense_run(const Dense& d, void* stream);
