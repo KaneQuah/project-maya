@@ -1339,9 +1339,9 @@ bool Glm5Model::prefill_setup(std::string& err) {
     // a split's parts pipeline chunks, so auto stops at kSplitAutoChunk: 8192 cut a 4K prompt into ONE chunk that no part
     // overlaps with another, and its buffers took 2.3 GB of the pool (4x P100: 4K prompt 162-205 tok/s, 1024 254).
     // It is sized here for kSplitSlowChunk, and prefill_link takes it to kSplitAutoChunk unless the host link timed
-    // slow (STRATA_GLM_PREFILL_SPLIT_AUTO=<tokens>: that chunk, no link test)
+    // slow (MAYA_GLM_PREFILL_SPLIT_AUTO=<tokens>: that chunk, no link test)
     static const int split_env = [] {
-        const char* v = getenv("STRATA_GLM_PREFILL_SPLIT_AUTO");
+        const char* v = getenv("MAYA_GLM_PREFILL_SPLIT_AUTO");
         return v != nullptr && std::atoi(v) >= kMinPrefillChunk ? std::atoi(v) / 256 * 256 : 0;
     }();
     const int64_t auto_max = n_parts_ == 1 ? 32768 : split_env > 0 ? split_env : kSplitSlowChunk;
